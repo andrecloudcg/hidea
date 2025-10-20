@@ -1,0 +1,16 @@
+[toolchain]
+anchor_version = "0.32.1"
+rust_version = "stable"
+package_manager = "yarn"
+
+[programs.localnet]
+hidea = "11111111111111111111111111111111"
+
+[provider]
+cluster = "localnet"
+wallet = "C:/Users/PC/.config/solana/id.json"
+
+[workspace]
+members = [
+    "programs/hidea"
+]
