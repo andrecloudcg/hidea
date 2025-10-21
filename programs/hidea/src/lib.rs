@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use anchor_lang::solana_program::clock::Clock;
 
 declare_id!("11111111111111111111111111111111");
@@ -13,6 +14,20 @@ pub mod hidea {
         bet_amount: u64,
     ) -> Result<()> {
         let game = &mut ctx.accounts.game;
+
+        // Transfert des tokens (bet) de player1 vers le vault
+        if bet_amount > 0 {
+            let cpi_accounts = Transfer {
+                from: ctx.accounts.player1_token_account.to_account_info(),
+                to: ctx.accounts.vault_token_account.to_account_info(),
+                authority: ctx.accounts.player1.to_account_info(),
+            };
+            let cpi_program = ctx.accounts.token_program.to_account_info();
+            token::transfer(
+                CpiContext::new(cpi_program, cpi_accounts),
+                bet_amount
+            )?;
+        }
 
         // Initialisation des joueurs
         game.player1 = ctx.accounts.player1.key();
@@ -39,7 +54,6 @@ pub mod hidea {
         let game = &mut ctx.accounts.game;
         let player = ctx.accounts.player.key();
 
-        // Vérification de l'état
         require!(game.is_active, GameError::GameFinished);
         require!(game.turn == player, GameError::NotYourTurn);
 
@@ -54,16 +68,16 @@ pub mod hidea {
         if game.mode == 0 {
             game.turn = if game.turn == game.player1 { game.player2 } else { game.player1 };
         } else {
-            // PvE simple : l'ordinateur joue un coup aléatoire
             play_ai_move(game)?;
             game.turn = game.player1;
         }
 
         // Vérifier fin de partie
-        if check_winner(&game.board) == 1 {
+        let winner = check_winner(&game.board);
+        if winner == 1 {
             game.winner = Some(game.player1);
             game.is_active = false;
-        } else if check_winner(&game.board) == 2 {
+        } else if winner == 2 {
             game.winner = Some(game.player2);
             game.is_active = false;
         }
@@ -83,6 +97,14 @@ pub struct InitializeGame<'info> {
     #[account(mut)]
     pub player1: Signer<'info>,
 
+    #[account(mut)]
+    pub player1_token_account: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub vault_token_account: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+
     pub system_program: Program<'info, System>,
 }
 
@@ -100,10 +122,10 @@ pub struct PlayMove<'info> {
 #[account]
 pub struct GameAccount {
     pub player1: Pubkey,
-    pub player2: Pubkey,        // PvE: Pubkey::default()
-    pub mode: u8,               // 0 = PvP, 1 = PvE
+    pub player2: Pubkey,
+    pub mode: u8,
     pub bet_amount: u64,
-    pub board: [[u8;8];8],      // plateau 8x8
+    pub board: [[u8;8];8],
     pub turn: Pubkey,
     pub winner: Option<Pubkey>,
     pub is_active: bool,
@@ -119,14 +141,12 @@ impl GameAccount {
 fn default_board() -> [[u8;8];8] {
     let mut board = [[0u8;8];8];
 
-    // Position initiale joueur 1 (top)
     for y in 0..3 {
         for x in 0..8 {
             if (x + y) % 2 == 1 { board[y][x] = 1; }
         }
     }
 
-    // Position initiale joueur 2 (bottom)
     for y in 5..8 {
         for x in 0..8 {
             if (x + y) % 2 == 1 { board[y][x] = 2; }
@@ -136,7 +156,6 @@ fn default_board() -> [[u8;8];8] {
     board
 }
 
-// Simpliste : retourne 0 = pas de gagnant, 1 = joueur1, 2 = joueur2
 fn check_winner(board: &[[u8;8];8]) -> u8 {
     let mut p1 = 0;
     let mut p2 = 0;
@@ -156,19 +175,16 @@ fn check_winner(board: &[[u8;8];8]) -> u8 {
     else { 0 }
 }
 
-// IA simple : joue le premier pion possible dans une direction valide
 fn play_ai_move(game: &mut GameAccount) -> Result<()> {
     for y in 0..8 {
         for x in 0..8 {
             let piece = game.board[y][x];
-            if piece == 2 { // IA = joueur 2
-                // Déplacement simple vers haut gauche
+            if piece == 2 {
                 if y > 0 && x > 0 && game.board[y-1][x-1] == 0 {
                     game.board[y-1][x-1] = piece;
                     game.board[y][x] = 0;
                     return Ok(());
                 }
-                // Déplacement simple vers haut droite
                 if y > 0 && x < 7 && game.board[y-1][x+1] == 0 {
                     game.board[y-1][x+1] = piece;
                     game.board[y][x] = 0;
